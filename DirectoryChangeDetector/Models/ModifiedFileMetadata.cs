@@ -5,7 +5,7 @@
  */
 public class ModifiedFileMetadata
 {
-    public string RelativePath { get; set; }
-    
-    public int Version { get; set; }
+    public string RelativePath { get; set; } = string.Empty;
+
+    public int Version { get; set; } = 1;
 }

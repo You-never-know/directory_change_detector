@@ -1,0 +1,230 @@
+﻿@using DirectoryChangeDetector.Models
+@model AnalysisResult?
+
+@{
+    ViewData["Title"] = "Directory Change Detector";
+}
+
+<div class="container mt-4">
+    <h1 class="mb-4">📁 Directory Change Detector</h1>
+
+    <form method="post" asp-action="Analyze" asp-controller="Home">
+        <div class="input-group mb-3">
+            <input type="text" class="form-control" id="directoryPathInput" name="directoryPath"
+                   placeholder="Enter directory path (e.g., C:\MyFolder)"
+                   value="@ViewBag.DirectoryPath" autocomplete="off" />
+            <button class="btn btn-outline-secondary" type="button" id="browseBtn">Browse</button>
+            <button class="btn btn-primary" type="submit">Analyze</button>
+        </div>
+    </form>
+
+    <!-- Directory Browser Modal -->
+    <div id="browserPanel" class="card mb-3" style="display:none;">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>📂 Select Directory</span>
+            <button type="button" class="btn-close" id="closeBrowser"></button>
+        </div>
+        <div class="card-body" style="max-height: 300px; overflow-y: auto;">
+            <div id="browserNav" class="mb-2"></div>
+            <div id="browserList"></div>
+            <div id="browserError" class="text-danger" style="display:none;"></div>
+        </div>
+        <div class="card-footer">
+            <button class="btn btn-sm btn-success" id="selectDirBtn">Select Current Directory</button>
+        </div>
+    </div>
+
+    @if (ViewBag.Error != null)
+    {
+        <div class="alert alert-danger">
+            <strong>Error:</strong> @ViewBag.Error
+        </div>
+    }
+
+    @if (Model != null)
+    {
+        <hr />
+
+        @if (Model.IsFirstRun)
+        {
+            <div class="alert alert-info">
+                <strong>First run!</strong> Snapshot created for <code>@Model.DirectoryPath</code>.
+                Detected <strong>@Model.NewFiles.Count</strong> file(s).
+            </div>
+
+            @if (Model.NewFiles.Any())
+            {
+                <h4>📄 Recorded Files</h4>
+                <ul class="list-group mb-3">
+                    @foreach (var file in Model.NewFiles)
+                    {
+                        <li class="list-group-item"><code>@file</code> <span class="badge bg-secondary">v1</span></li>
+                    }
+                </ul>
+            }
+        }
+        else
+        {
+            <div class="alert alert-success">
+                <strong>Analysis complete</strong> for <code>@Model.DirectoryPath</code>.
+            </div>
+
+            @if (!Model.NewFiles.Any() && !Model.ModifiedFiles.Any() && !Model.DeletedFiles.Any() && !Model.DeletedSubdirectories.Any())
+            {
+                <div class="alert alert-secondary">
+                    No changes detected since last analysis.
+                </div>
+            }
+
+            @if (Model.NewFiles.Any())
+            {
+                <h4>✅ New Files</h4>
+                <ul class="list-group mb-3">
+                    @foreach (var file in Model.NewFiles)
+                    {
+                        <li class="list-group-item list-group-item-success"><code>@file</code> <span class="badge bg-secondary">v1</span></li>
+                    }
+                </ul>
+            }
+
+            @if (Model.ModifiedFiles.Any())
+            {
+                <h4>✏️ Modified Files</h4>
+                <table class="table table-sm table-striped">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Version Change</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var file in Model.ModifiedFiles)
+                        {
+                            <tr class="table-warning">
+                                <td><code>@file.RelativePath</code></td>
+                                <td>@(file.Version) → @(file.Version + 1)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            @if (Model.DeletedFiles.Any())
+            {
+                <h4>❌ Deleted Files</h4>
+                <ul class="list-group mb-3">
+                    @foreach (var file in Model.DeletedFiles)
+                    {
+                        <li class="list-group-item list-group-item-danger"><code>@file</code></li>
+                    }
+                </ul>
+            }
+
+            @if (Model.DeletedSubdirectories.Any())
+            {
+                <h4>🗂️ Deleted Subdirectories</h4>
+                <ul class="list-group mb-3">
+                    @foreach (var dir in Model.DeletedSubdirectories)
+                    {
+                        <li class="list-group-item list-group-item-danger"><code>@dir</code></li>
+                    }
+                </ul>
+            }
+        }
+
+        @if (Model.Warnings.Any())
+        {
+            <h5>⚠️ Warnings</h5>
+            <ul class="list-group mb-3">
+                @foreach (var warning in Model.Warnings)
+                {
+                    <li class="list-group-item list-group-item-warning">@warning</li>
+                }
+            </ul>
+        }
+    }
+</div>
+
+@section Scripts {
+<script>
+    const browseBtn = document.getElementById('browseBtn');
+    const closeBrowser = document.getElementById('closeBrowser');
+    const browserPanel = document.getElementById('browserPanel');
+    const browserNav = document.getElementById('browserNav');
+    const browserList = document.getElementById('browserList');
+    const browserError = document.getElementById('browserError');
+    const selectDirBtn = document.getElementById('selectDirBtn');
+    const pathInput = document.getElementById('directoryPathInput');
+
+    let currentBrowsePath = null;
+
+    browseBtn.addEventListener('click', () => {
+        browserPanel.style.display = 'block';
+        loadDirectory(null);
+    });
+
+    closeBrowser.addEventListener('click', () => {
+        browserPanel.style.display = 'none';
+    });
+
+    selectDirBtn.addEventListener('click', () => {
+        if (currentBrowsePath) {
+            pathInput.value = currentBrowsePath;
+            browserPanel.style.display = 'none';
+        }
+    });
+
+    async function loadDirectory(path) {
+        browserError.style.display = 'none';
+        browserList.innerHTML = '<span class="text-muted">Loading...</span>';
+
+        const url = path
+            ? `/Home/BrowseDirectories?path=${encodeURIComponent(path)}`
+            : '/Home/BrowseDirectories';
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        if (data.error) {
+            browserError.textContent = data.error;
+            browserError.style.display = 'block';
+            browserList.innerHTML = '';
+            return;
+        }
+
+        currentBrowsePath = path;
+
+        // Navigation breadcrumb
+        let navHtml = '';
+        if (path) {
+            navHtml = `<small class="text-muted">📍 ${path}</small>`;
+        } else {
+            navHtml = '<small class="text-muted">📍 Drives</small>';
+        }
+        browserNav.innerHTML = navHtml;
+
+        // Directory list
+        let html = '';
+
+        if (data.parent !== undefined && data.parent !== null) {
+            html += `<a href="#" class="list-group-item list-group-item-action" onclick="loadDirectory('${escapeJs(data.parent)}'); return false;">⬆️ ..</a>`;
+        } else if (path) {
+            html += `<a href="#" class="list-group-item list-group-item-action" onclick="loadDirectory(null); return false;">⬆️ .. (drives)</a>`;
+        }
+
+        for (const item of data.items) {
+            html += `<a href="#" class="list-group-item list-group-item-action" onclick="loadDirectory('${escapeJs(item.path)}'); return false;">📁 ${item.name}</a>`;
+        }
+
+        if (data.items.length === 0 && path) {
+            html += '<span class="list-group-item text-muted">No subdirectories</span>';
+        }
+
+        browserList.innerHTML = `<div class="list-group">${html}</div>`;
+    }
+
+    function escapeJs(str) {
+        return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
+</script>
+}

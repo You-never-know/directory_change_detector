@@ -8,7 +8,7 @@ namespace DirectoryChangeDetector.Models;
  */
 public class DirectorySnapshotData
 {
-    public string DirectoryPath { get; set; }
+    public string DirectoryPath { get; set; } = string.Empty;
 
     public List<FileMetadata> Files { get; set; } = [];
 

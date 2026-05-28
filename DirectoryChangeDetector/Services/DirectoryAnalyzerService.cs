@@ -40,9 +40,8 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
         var scanResult = ScanDirectory(fullPath);
         var previousSnapshot = LoadSnapshot(fullPath);
         var result = CompareWithPrevious(fullPath, scanResult, previousSnapshot);
-
-        // TODO
-        //SaveSnapshot(fullPath, scanResult);
+        
+        SaveSnapshot(fullPath, scanResult);
 
         return result;
     }
@@ -146,9 +145,74 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
         }
         
         var previousFileMap = previousSnapshot.Files.ToDictionary(f => f.RelativePath, StringComparer.OrdinalIgnoreCase);
-        // TODO
 
-        return null;
+        var newFiles = new List<string>();
+        var modifiedFiles = new List<ModifiedFileMetadata>();
+        var stillExistingPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        
+        // Single pass over current files: classify as new/modified/unchanged
+        foreach (var currentFile in scanResult.Files)
+        {
+            if (!previousFileMap.TryGetValue(currentFile.RelativePath, out var alreadyExistingFile))
+            {
+                newFiles.Add(currentFile.RelativePath);
+                continue;
+            }
+            
+            stillExistingPaths.Add(alreadyExistingFile.RelativePath);
+
+            // Check if the file was modified
+            if (currentFile.FileHash != alreadyExistingFile.FileHash)
+            {
+                currentFile.Version = alreadyExistingFile.Version++;
+                modifiedFiles.Add(new ModifiedFileMetadata
+                {
+                    RelativePath = currentFile.RelativePath,
+                    Version = currentFile.Version
+                });
+            }
+            else
+            {
+                currentFile.Version = alreadyExistingFile.Version;
+            }  
+        }
+
+        // Single pass over previous files: anything not seen is deleted
+        var deletedFiles = previousSnapshot.Files
+            .Where(f => !stillExistingPaths.Contains(f.RelativePath))
+            .Select(f => f.RelativePath)
+            .ToList();
+        
+        // Single pass over previous subdirectories
+        var currentSubdirectoriesSet =  new HashSet<string>(scanResult.Subdirectories, StringComparer.OrdinalIgnoreCase);
+        var deletedSubdirectories = previousSnapshot.Subdirectories
+            .Where(s => !currentSubdirectoriesSet.Contains(s))
+            .ToList();
+
+        return new AnalysisResult
+        {
+            DirectoryPath = fullPath,
+            IsFirstRun = false,
+            NewFiles = newFiles,
+            ModifiedFiles = modifiedFiles,
+            DeletedFiles = deletedFiles,
+            DeletedSubdirectories = deletedSubdirectories,
+            Warnings = scanResult.Warnings
+        };
+    }
+
+    private void SaveSnapshot(string fullPath, ScanResult scanResult)
+    {
+        var directorySnapshotData = new DirectorySnapshotData
+        {
+            DirectoryPath = fullPath,
+            Files = scanResult.Files,
+            Subdirectories = scanResult.Subdirectories,
+            AnalyzedAt = DateTime.UtcNow
+        };
+        
+        var json = JsonSerializer.Serialize(directorySnapshotData, _jsonSerializerOptions);
+        File.WriteAllText(GetSnapshotPath(fullPath), json);
     }
     
     private void EnsureDataFolderExists() => Directory.CreateDirectory(_dataFolder);

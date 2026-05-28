@@ -58,3 +58,6 @@ nunit-*.xml
 
 # idea files
 .idea/*
+
+# generated Data
+Data/*
