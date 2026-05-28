@@ -39,9 +39,9 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
         
         var scanResult = ScanDirectory(fullPath);
         var previousSnapshot = LoadSnapshot(fullPath);
-        var result = CompareWithPrevious(fullPath, scanResult, previousSnapshot);
+        var (result, versionedFiles) = CompareWithPrevious(fullPath, scanResult, previousSnapshot);
         
-        SaveSnapshot(fullPath, scanResult);
+        SaveSnapshot(fullPath, versionedFiles, scanResult.Subdirectories);
 
         return result;
     }
@@ -130,18 +130,20 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
         return JsonSerializer.Deserialize<DirectorySnapshotData>(json, _jsonSerializerOptions);
     }
 
-    private AnalysisResult CompareWithPrevious(string fullPath, ScanResult scanResult,
-        DirectorySnapshotData? previousSnapshot)
+    private (AnalysisResult Result, List<FileMetadata> VersionedFiles) CompareWithPrevious(
+        string fullPath, ScanResult scanResult, DirectorySnapshotData? previousSnapshot)
     {
         if (previousSnapshot == null)
         {
-            return new AnalysisResult
+            // First run - all files are new at version 1
+            var result = new AnalysisResult
             {
                 DirectoryPath = fullPath,
                 IsFirstRun = true,
                 NewFiles = scanResult.Files.Select(f => f.RelativePath).ToList(),
                 Warnings = scanResult.Warnings
             };
+            return (result, scanResult.Files);
         }
         
         var previousFileMap = previousSnapshot.Files.ToDictionary(f => f.RelativePath, StringComparer.OrdinalIgnoreCase);
@@ -149,13 +151,16 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
         var newFiles = new List<string>();
         var modifiedFiles = new List<ModifiedFileMetadata>();
         var stillExistingPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var versionedFiles = new List<FileMetadata>(scanResult.Files.Count);
         
-        // Single pass over current files: classify as new/modified/unchanged
+        // Single pass over current files: classify and assign correct versions
         foreach (var currentFile in scanResult.Files)
         {
             if (!previousFileMap.TryGetValue(currentFile.RelativePath, out var alreadyExistingFile))
             {
+                // New file - version stays at 1
                 newFiles.Add(currentFile.RelativePath);
+                versionedFiles.Add(currentFile);
                 continue;
             }
             
@@ -164,7 +169,8 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
             // Check if the file was modified
             if (currentFile.FileHash != alreadyExistingFile.FileHash)
             {
-                currentFile.Version = alreadyExistingFile.Version++;
+                // Modified - increment version
+                currentFile.Version = alreadyExistingFile.Version + 1;
                 modifiedFiles.Add(new ModifiedFileMetadata
                 {
                     RelativePath = currentFile.RelativePath,
@@ -173,8 +179,11 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
             }
             else
             {
+                // Unchanged - carry previous version
                 currentFile.Version = alreadyExistingFile.Version;
             }  
+            
+            versionedFiles.Add(currentFile);
         }
 
         // Single pass over previous files: anything not seen is deleted
@@ -189,7 +198,7 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
             .Where(s => !currentSubdirectoriesSet.Contains(s))
             .ToList();
 
-        return new AnalysisResult
+        var analysisResult = new AnalysisResult
         {
             DirectoryPath = fullPath,
             IsFirstRun = false,
@@ -199,15 +208,17 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
             DeletedSubdirectories = deletedSubdirectories,
             Warnings = scanResult.Warnings
         };
+        
+        return (analysisResult, versionedFiles);
     }
 
-    private void SaveSnapshot(string fullPath, ScanResult scanResult)
+    private void SaveSnapshot(string fullPath, List<FileMetadata> versionedFiles, List<string> subdirectories)
     {
         var directorySnapshotData = new DirectorySnapshotData
         {
             DirectoryPath = fullPath,
-            Files = scanResult.Files,
-            Subdirectories = scanResult.Subdirectories,
+            Files = versionedFiles,
+            Subdirectories = subdirectories,
             AnalyzedAt = DateTime.UtcNow
         };
         
