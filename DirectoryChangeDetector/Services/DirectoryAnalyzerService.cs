@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
 using DirectoryChangeDetector.Models;
 using DirectoryChangeDetector.Services.Helpers;
@@ -39,7 +38,7 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
         
         var scanResult = ScanDirectory(fullPath);
         var previousSnapshot = _snapshotHelper.LoadSnapshot(fullPath);
-        var (result, versionedFiles) = CompareWithPrevious(fullPath, scanResult, previousSnapshot);
+        var (result, versionedFiles) = _snapshotHelper.CompareWithPrevious(fullPath, scanResult, previousSnapshot);
         
         _snapshotHelper.SaveSnapshot(fullPath, versionedFiles, scanResult.Subdirectories);
 
@@ -116,88 +115,6 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
             context.Warnings.Add($"Error reading file: {FileSystemHelper.GetRelativePath(context.RootPath, filePath)}: {ex.Message}");
         }
     }
-
-    private (AnalysisResult Result, List<FileMetadata> VersionedFiles) CompareWithPrevious(
-        string fullPath, ScanResult scanResult, DirectorySnapshotData? previousSnapshot)
-    {
-        if (previousSnapshot == null)
-        {
-            // First run - all files are new at version 1
-            var result = new AnalysisResult
-            {
-                DirectoryPath = fullPath,
-                IsFirstRun = true,
-                NewFiles = scanResult.Files.Select(f => f.RelativePath).ToList(),
-                Warnings = scanResult.Warnings
-            };
-            return (result, scanResult.Files);
-        }
-        
-        var previousFileMap = previousSnapshot.Files.ToDictionary(f => f.RelativePath, StringComparer.OrdinalIgnoreCase);
-
-        var newFiles = new List<string>();
-        var modifiedFiles = new List<ModifiedFileMetadata>();
-        var stillExistingPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var versionedFiles = new List<FileMetadata>(scanResult.Files.Count);
-        
-        // Single pass over current files: classify and assign correct versions
-        foreach (var currentFile in scanResult.Files)
-        {
-            if (!previousFileMap.TryGetValue(currentFile.RelativePath, out var alreadyExistingFile))
-            {
-                // New file - version stays at 1
-                newFiles.Add(currentFile.RelativePath);
-                versionedFiles.Add(currentFile);
-                continue;
-            }
-            
-            stillExistingPaths.Add(alreadyExistingFile.RelativePath);
-
-            // Check if the file was modified
-            if (currentFile.FileHash != alreadyExistingFile.FileHash)
-            {
-                // Modified - increment version
-                currentFile.Version = alreadyExistingFile.Version + 1;
-                modifiedFiles.Add(new ModifiedFileMetadata
-                {
-                    RelativePath = currentFile.RelativePath,
-                    Version = currentFile.Version
-                });
-            }
-            else
-            {
-                // Unchanged - carry previous version
-                currentFile.Version = alreadyExistingFile.Version;
-            }  
-            
-            versionedFiles.Add(currentFile);
-        }
-
-        // Single pass over previous files: anything not seen is deleted
-        var deletedFiles = previousSnapshot.Files
-            .Where(f => !stillExistingPaths.Contains(f.RelativePath))
-            .Select(f => f.RelativePath)
-            .ToList();
-        
-        // Single pass over previous subdirectories
-        var currentSubdirectoriesSet =  new HashSet<string>(scanResult.Subdirectories, StringComparer.OrdinalIgnoreCase);
-        var deletedSubdirectories = previousSnapshot.Subdirectories
-            .Where(s => !currentSubdirectoriesSet.Contains(s))
-            .ToList();
-
-        var analysisResult = new AnalysisResult
-        {
-            DirectoryPath = fullPath,
-            IsFirstRun = false,
-            NewFiles = newFiles,
-            ModifiedFiles = modifiedFiles,
-            DeletedFiles = deletedFiles,
-            DeletedSubdirectories = deletedSubdirectories,
-            Warnings = scanResult.Warnings
-        };
-        
-        return (analysisResult, versionedFiles);
-    }
     
     private void EnsureDataFolderExists() => Directory.CreateDirectory(_dataFolder);
 
@@ -223,6 +140,6 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
     /// <summary>
     /// Immutable result of a directory scan
     /// </summary>
-    private sealed record ScanResult(List<FileMetadata> Files, List<string> Subdirectories, List<string> Warnings);
+    public sealed record ScanResult(List<FileMetadata> Files, List<string> Subdirectories, List<string> Warnings);
 
 }
