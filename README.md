@@ -54,7 +54,8 @@ DirectoryChangeDetector/
 ├── Services/
 │   ├── IDirectoryAnalyzerService.cs   – Service interface (DI contract)
 │   ├── DirectoryAnalyzerService.cs    – Core logic: scan, compare, persist
-│   └── Helpers/FileSystemHelper.cs    – Static utilities: hashing, path resolution       
+│   ├── Helpers/FileSystemHelper.cs    – Static utilities: hashing, path resolution
+│   └── Helpers/SnapshotHelper         - Helper for loading and saving the snapshot into the file system      
 ├── Views/
 │   ├── Home/Index.cshtml              – Main UI with directory browser
 │   └── Shared/_Layout.cshtml          – Bootstrap layout
