@@ -13,8 +13,8 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
 {
     private const long MaxFileSizeBytes = 50L * 1024 * 1024; // 50MB
     private readonly string _dataFolder;
-    private readonly JsonSerializerOptions _jsonSerializerOptions;
-
+    private SnapshotHelper _snapshotHelper;
+    
     public DirectoryAnalyzerService(IWebHostEnvironment webHostEnvironment)
     : this(webHostEnvironment, new JsonSerializerOptions() { WriteIndented = true })
     {
@@ -23,7 +23,7 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
     public DirectoryAnalyzerService(IWebHostEnvironment webHostEnvironment, JsonSerializerOptions jsonSerializerOptions)
     {
         _dataFolder = Path.Combine(webHostEnvironment.ContentRootPath, "Data");
-        _jsonSerializerOptions = jsonSerializerOptions;
+        _snapshotHelper = new SnapshotHelper(_dataFolder, jsonSerializerOptions);
     }
     
     public AnalysisResult AnalyzeDirectory(string directoryPath)
@@ -38,10 +38,10 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
         }
         
         var scanResult = ScanDirectory(fullPath);
-        var previousSnapshot = LoadSnapshot(fullPath);
+        var previousSnapshot = _snapshotHelper.LoadSnapshot(fullPath);
         var (result, versionedFiles) = CompareWithPrevious(fullPath, scanResult, previousSnapshot);
         
-        SaveSnapshot(fullPath, versionedFiles, scanResult.Subdirectories);
+        _snapshotHelper.SaveSnapshot(fullPath, versionedFiles, scanResult.Subdirectories);
 
         return result;
     }
@@ -115,19 +115,6 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
         {
             context.Warnings.Add($"Error reading file: {FileSystemHelper.GetRelativePath(context.RootPath, filePath)}: {ex.Message}");
         }
-    }
-
-    private DirectorySnapshotData? LoadSnapshot(string directoryPath)
-    {
-        var snapshotPath = GetSnapshotPath(directoryPath);
-
-        if (!File.Exists(snapshotPath))
-        {
-            return null;
-        }
-
-        var json = File.ReadAllText(snapshotPath);
-        return JsonSerializer.Deserialize<DirectorySnapshotData>(json, _jsonSerializerOptions);
     }
 
     private (AnalysisResult Result, List<FileMetadata> VersionedFiles) CompareWithPrevious(
@@ -211,25 +198,8 @@ public class DirectoryAnalyzerService : IDirectoryAnalyzerService
         
         return (analysisResult, versionedFiles);
     }
-
-    private void SaveSnapshot(string fullPath, List<FileMetadata> versionedFiles, List<string> subdirectories)
-    {
-        var directorySnapshotData = new DirectorySnapshotData
-        {
-            DirectoryPath = fullPath,
-            Files = versionedFiles,
-            Subdirectories = subdirectories,
-            AnalyzedAt = DateTime.UtcNow
-        };
-        
-        var json = JsonSerializer.Serialize(directorySnapshotData, _jsonSerializerOptions);
-        File.WriteAllText(GetSnapshotPath(fullPath), json);
-    }
     
     private void EnsureDataFolderExists() => Directory.CreateDirectory(_dataFolder);
-    
-    private string GetSnapshotPath(string directoryPath) 
-        => Path.Combine(_dataFolder, FileSystemHelper.GetSnapshotFileName(directoryPath));
 
     /// <summary>
     /// Holds mutable state during recursive directory scanning.
